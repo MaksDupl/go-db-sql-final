@@ -37,25 +37,18 @@ func (s ParcelStore) Get(number int) (Parcel, error) {
 	p := Parcel{}
 
 	// выполняем запрос для получения строки по номеру
-	rows, err := s.db.Query(`
-		SELECT client, status, address, created_at
+	err := s.db.QueryRow(`
+		SELECT number, client, status, address, created_at
 		FROM parcel
-		WHERE number = ?`, number)
+		WHERE number = ?`, number).
+		Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt)
+
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return Parcel{}, fmt.Errorf("посылка с номером %d не найдена", number)
+		}
 		return Parcel{}, fmt.Errorf("ошибка выполнения запроса: %w", err)
 	}
-	defer rows.Close()
-
-	// Считываем данные из первой строки
-	if rows.Next() {
-		err := rows.Scan(&p.Client, &p.Status, &p.Address, &p.CreatedAt)
-		if err != nil {
-			return Parcel{}, fmt.Errorf("ошибка сканирования данных: %w", err)
-		}
-	} else {
-		return Parcel{}, fmt.Errorf("посылка с номером %d не найдена", number)
-	}
-
 	return p, nil
 }
 
@@ -102,22 +95,20 @@ func (s ParcelStore) SetStatus(number int, status string) error {
 func (s ParcelStore) SetAddress(number int, address string) error {
 	// реализуйте обновление адреса в таблице parcel
 	// менять адрес можно только если значение статуса registered
-	var status string
-	err := s.db.QueryRow("SELECT status FROM parcel WHERE number = ?", number).Scan(&status)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("посылка с номером %d не найдена", number)
-		}
-		return fmt.Errorf("ошибка получения данных для посылки с номером %d: %v", number, err)
-	}
-
-	if status != ParcelStatusRegistered {
-		return fmt.Errorf("невозможно изменить адрес, статус посылки с номером %d не 'registered'", number)
-	}
-
-	_, err = s.db.Exec("UPDATE parcel SET address = ? WHERE number = ?", address, number)
+	res, err := s.db.Exec(`
+		UPDATE parcel 
+		SET address = ? 
+		WHERE number = ? AND status = ?`, address, number, ParcelStatusRegistered)
 	if err != nil {
 		return fmt.Errorf("ошибка обновления адреса: %v", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("ошибка проверки обновления: %v", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("невозможно изменить адрес: либо посылка не найдена, либо её статус не 'registered'")
 	}
 
 	return nil
@@ -126,21 +117,19 @@ func (s ParcelStore) SetAddress(number int, address string) error {
 func (s ParcelStore) Delete(number int) error {
 	// реализуйте удаление строки из таблицы parcel
 	// удалять строку можно только если значение статуса registered
-	var status string
-	err := s.db.QueryRow("SELECT status FROM parcel WHERE number = ?", number).Scan(&status)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("посылка с номером %d не найдена", number)
-		}
-		return fmt.Errorf("ошибка получения данных для посылки с номером %d: %v", number, err)
-	}
-
-	if status != ParcelStatusRegistered {
-		return fmt.Errorf("невозможно удалить строку, статус посылки с номером %d не 'registered'", number)
-	}
-	_, err = s.db.Exec("DELETE FROM parcel WHERE number = ?", number)
+	res, err := s.db.Exec(`
+		DELETE FROM parcel 
+		WHERE number = ? AND status = ?`, number, ParcelStatusRegistered)
 	if err != nil {
 		return fmt.Errorf("ошибка удаления строки: %v", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("ошибка проверки удаления: %v", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("невозможно удалить строку: либо посылка не найдена, либо её статус не 'registered'")
 	}
 
 	return nil
